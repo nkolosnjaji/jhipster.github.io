@@ -9,6 +9,7 @@ lastmod: 2016-11-12T22:22:00-00:00
 # Boost performance of pagination with infinite scrolling using Slice
 
 __Tip submitted by [@nkolosnjaji](https://github.com/nkolosnjaji)__
+__SliceResponseBodyAdvice by [@blagerweij](https://github.com/blagerweij)__
 
 Pagination with infinite scrolling is using Spring Data Page to retrieve entities from your database.
 This will trigger two queries, one to fetch entities and second for `count all` to determine the total items for paging. Infinite scrolling doesn't need information about the total size but only if there is a next page to load. To avoid `count all` query which can be an expensive operation when working with large datasets, use [Slice](http://docs.spring.io/spring-data/commons/docs/current/api/org/springframework/data/domain/Slice.html) instead of Page which will boost performance of infinite scrolling.
@@ -21,26 +22,37 @@ We will use a custom HTTP header `X-Has-Next-Page` to send information to front-
 Slice<YourEntity> findSliceBy(Pageable pageable);
 ```
 
-  * Define new static method in `PaginationUtil.java` located in `web/rest/util` package
+  * Add a new class called `SliceResponseBodyAdvice`, this will improve the default Spring-Data rendering for Slice responses by adding an HTTP header, and returning the JSON array directly:
 
 ```
-public static HttpHeaders generateSliceHttpHeaders(Slice<?> slice) {
-  HttpHeaders headers = new HttpHeaders();
-  headers.add("X-Has-Next-Page", "" + slice.hasNext());
-  return headers;
+@ControllerAdvice
+public class SliceResponseBodyAdvice implements ResponseBodyAdvice<Object> {
+
+    @Override
+    public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
+        return true;
+    }
+
+    @Override
+    public Object beforeBodyWrite(Object body, MethodParameter returnType, MediaType selectedContentType, Class<? extends HttpMessageConverter<?>> selectedConverterType, ServerHttpRequest request, ServerHttpResponse response) {
+        if (body instanceof Slice) {
+            Slice slice = (Slice) body;
+            response.getHeaders().add("X-Has-Next-Page",String.valueOf(slice.hasNext()));
+            return slice.getContent();
+        }
+        return body;
+    }
 }
 ```
 
-  * Modify REST controller to call Slice instead of Page and generate new HTTP headers.
+  * Modify REST controller to call Slice instead of Page. Note that the controller simply returns a Slice<Object>.
 
 ```
 @GetMapping("/<YourEntities>")
 @Timed
-public ResponseEntity<List<Repo>> getAllRepos(Pageable pageable)
+public @ResponseBody Slice<YourEntity> getAllYourEntities(Pageable pageable)
     throws URISyntaxException {
-    Slice<YourEntity> slice = repoRepository.findSliceBy(pageable);
-    HttpHeaders headers = PaginationUtil.generateSliceHttpHeaders(slice);
-    return new ResponseEntity<>(slice.getContent(), headers, HttpStatus.OK);
+    return repoRepository.findSliceBy(pageable);
 }
 ```
 
